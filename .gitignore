@@ -1,0 +1,6 @@
+venv/
+env/
+tool.log
+resume.cfg
+__pycache__/
+*.py[cod]

@@ -1,0 +1,59 @@
+{
+	"default": {
+		"log_file" : "tool.log"
+	},
+	"project_domain_list": [
+		["Example", "storage/domain_list_files/example.txt", true],
+		["LocalHost", "storage/domain_list_files/localhost.txt", false]
+	],
+	"variables": {
+		"headers_user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:99.0) Gecko/20100101 Firefox/99.0",
+		"out_dir_subfinder": "out/subfinder",
+		"out_dir_httpx": "out/httpx",
+		"out_dir_nuclei": "out/nuclei",
+		"out_dir_dig": "out/dig",
+		"out_dir_nmap": "out/nmap"
+	},
+
+	"chains": {
+		"subfinder": [
+			[["{path}/tools/subfinder", "-dL", "{domain_list_file}"], "{out_dir_subfinder}/{project}_subdomains.txt", "tool.log:a" ],
+			[["cat", "{domain_list_file}"], "{out_dir_subfinder}/{project}_subdomains.txt:a"]
+		],
+		"dns_resolution_and_save_unique_ips_in_separate_file": [
+			[["dyn_func:resolve_dns_for_domains"], "{out_dir_dig}/{project}_ips.txt", null, "{out_dir_subfinder}/{project}_subdomains.txt"],
+			[["cut", "-d", ",", "-f2-", "{out_dir_dig}/{project}_ips.txt"], "{out_dir_dig}/{project}_ips.unique.txt"],
+			[["sed", "-i", ":a;N;$!ba;s/\\n\\n/\\n/g; s/,/\\n/g", "{out_dir_dig}/{project}_ips.unique.txt"]],
+			[["sort", "-u", "{out_dir_dig}/{project}_ips.unique.txt", "-o", "{out_dir_dig}/{project}_ips.unique.txt"]]
+		],
+		"save_top_ports_in_variable":[
+			[["nmap", "localhost", "--top-ports", "100", "-oX", "/dev/stdout"], "top_ports:var"],
+			[["sed", "-nr", "s/.*services=\"(.*)\"\\/>/\\1/p"],  "top_ports:var", null, "top_ports:var"]
+		],
+		"nmap_scan": [
+			[["nmap", "-iL", "{out_dir_dig}/{project}_ips.unique.txt", "-p", "{top_ports}", "-oX", "{out_dir_nmap}/{project}.xml"]]
+		],
+		"nmap_scan_parse_xml_out":[
+			[["dyn_func:getPortsFromNmapScan"], "{out_dir_nmap}/{project}_host_ports.csv", null, "{out_dir_nmap}/{project}.xml", "{out_dir_dig}/{project}_ips.txt"]
+		],
+		"httpx": [
+			[["func:foreach_exec", "{path}/tools/httpx", "-nf", "-p", "{httpx_ports}", "--stats"], "{out_dir_httpx}/{project}_urls.txt:a", null, "httpx_host:var", "{out_dir_nmap}/{project}_host_ports.csv", {
+				"httpx_ports": "[\\d\\.]*,([\\d\\-,]*)",
+				"httpx_host": "([a-zA-Z\\.\\-0-9]*)"
+			}],
+			[["sort", "-u", "{out_dir_httpx}/{project}_urls.txt", "-o", "{out_dir_httpx}/{project}_urls.txt"]]
+		],
+		"nuclei": [
+			[["{path}/tools/nuclei", "-l", "{out_dir_httpx}/{project}_urls.txt", "-o", "{out_dir_nuclei}/{project}_nuclei.txt", "-H", "User-Agent: {headers_user_agent}", "-rlm", "1200", "-c", "25", "--timeout", "10", "-t", "{path}/tools/nuclei-templates"], "tool.log:a", "tool.log:a"]
+		]
+	},
+	"commands_out_err_args": [
+		"subfinder",
+		"dns_resolution_and_save_unique_ips_in_separate_file",
+		"save_top_ports_in_variable",
+		"nmap_scan",
+		"nmap_scan_parse_xml_out",
+		"httpx",
+		"nuclei"
+	]
+}
